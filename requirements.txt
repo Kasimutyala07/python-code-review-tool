@@ -1,0 +1,3 @@
+# Optional enhancements (Tool runs with 0 dependencies using standard library)
+rich>=13.0.0
+python-dotenv>=1.0.0

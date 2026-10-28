@@ -1,0 +1,69 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+  
+    {
+      "name": "▶ Run Review Tool (Interactive)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--interactive"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "▶ Case 1: Order Total Issue",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": [
+        "--file", "${workspaceFolder}/review-input/order_service.py",
+        "--request", "I ordered three MUGs at $10 each using pickup, no coupon. The subtotal is $10 and total is $11. I expected $30 before tax. Can you check what is happening?",
+        "--provider", "mock"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "▶ Case 2: Cancelled Order Issue",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": [
+        "--file", "${workspaceFolder}/review-input/order_service.py",
+        "--request", "I placed an order, cancelled it, then ran the sales report for that day. It still shows one order and the original sales amount. Please investigate.",
+        "--provider", "mock"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "▶ Case 3: General Code Review",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": [
+        "--file", "${workspaceFolder}/review-input/order_service.py",
+        "--request", "Review this code for bugs. Focus on mistakes that could change totals or stock. Explain the most important findings and what I should check next.",
+        "--provider", "mock"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "▶ Test Simulated Failure (Quota 429)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": [
+        "--file", "${workspaceFolder}/review-input/order_service.py",
+        "--request", "Review this code for bugs.",
+        "--simulate-failure", "quota_exceeded"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "▶ Run Automated Test Suite",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_tests.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}

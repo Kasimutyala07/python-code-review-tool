@@ -1,0 +1,43 @@
+======================================================================
+TEST EXECUTION RUN - 2026-10-28 12:36:21
+======================================================================
+Python Version: 3.13.0
+Total Tests Run: 12
+Errors: 0
+Failures: 0
+Skipped: 0
+Duration: 2.773s
+Overall Status: PASSED
+----------------------------------------------------------------------
+Detailed Output:
+test_parses_symbols_safely (test_analyzer.TestCodeAnalyzer.test_parses_symbols_safely)
+Verifies AST extraction of classes, functions, and docstrings. ... ok
+test_relevance_ranking (test_analyzer.TestCodeAnalyzer.test_relevance_ranking)
+Verifies relevant symbols are ranked higher for matching queries. ... ok
+test_source_integrity_verification (test_analyzer.TestCodeAnalyzer.test_source_integrity_verification)
+Verifies SHA256 hash detects any modification to source file. ... ok
+test_syntax_error_handling (test_analyzer.TestCodeAnalyzer.test_syntax_error_handling)
+Verifies graceful error capture for invalid Python syntax without crashing. ... ok
+test_cli_help_flag (test_cli.TestCLIExecution.test_cli_help_flag)
+Verifies CLI help flag displays options. ... ok
+test_cli_missing_file_fails (test_cli.TestCLIExecution.test_cli_missing_file_fails)
+Verifies CLI exits with code 2 when required --file argument is missing. ... ok
+test_cli_successful_mock_review (test_cli.TestCLIExecution.test_cli_successful_mock_review)
+Verifies CLI runs end-to-end with mock provider and generates reports. ... ok
+test_handles_empty_response_gracefully (test_provider_failures.TestProviderFailuresAndEvidence.test_handles_empty_response_gracefully)
+Verifies empty response from model is rejected and not marked successful. ... ok
+test_handles_quota_exceeded_gracefully (test_provider_failures.TestProviderFailuresAndEvidence.test_handles_quota_exceeded_gracefully)
+Verifies HTTP 429 quota exhaustion is captured without claiming success. ... ok
+test_handles_timeout_gracefully (test_provider_failures.TestProviderFailuresAndEvidence.test_handles_timeout_gracefully)
+Verifies network timeout failure is caught and logged. ... ok
+test_rejects_blank_request (test_provider_failures.TestProviderFailuresAndEvidence.test_rejects_blank_request)
+Verifies empty or whitespace-only requests are rejected upfront. ... ok
+test_source_preservation_guarantee (test_provider_failures.TestProviderFailuresAndEvidence.test_source_preservation_guarantee)
+Verifies that the original source code remains bit-for-bit identical before and after review. ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 2.773s
+
+OK
+
+======================================================================

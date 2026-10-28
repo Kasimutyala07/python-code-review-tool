@@ -1,0 +1,114 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Review Active File in Editor",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/main.py",
+        "--file", "${file}",
+        "--request", "${input:reviewPrompt}",
+        "--provider", "mock"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run All Automated Tests",
+      "type": "shell",
+      "command": "python3",
+      "args": ["${workspaceFolder}/run_tests.py"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Assignment Request 1 (Order Total)",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/main.py",
+        "-f", "${workspaceFolder}/review-input/order_service.py",
+        "-r", "I ordered three MUGs at $10 each using pickup, no coupon. The subtotal is $10 and total is $11. I expected $30 before tax. Can you check what is happening?",
+        "-p", "mock"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run Assignment Request 2 (Cancelled Order)",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/main.py",
+        "-f", "${workspaceFolder}/review-input/order_service.py",
+        "-r", "I placed an order, cancelled it, then ran the sales report for that day. It still shows one order and the original sales amount. Please investigate.",
+        "-p", "mock"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run Assignment Request 3 (General Review)",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/main.py",
+        "-f", "${workspaceFolder}/review-input/order_service.py",
+        "-r", "Review this code for bugs. Focus on mistakes that could change totals or stock. Explain the most important findings and what I should check next.",
+        "-p", "mock"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "View Review Ledger Summary",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/main.py",
+        "--summary"
+      ],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "reviewPrompt",
+      "type": "promptString",
+      "description": "Enter your review question or describe the problem (e.g., 'Review this code for bugs'):",
+      "default": "Review this code for bugs. Focus on mistakes that could change totals or stock."
+    }
+  ]
+}
