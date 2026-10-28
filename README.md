@@ -1,4 +1,4 @@
-# Python Code Review Tool (AI Engineering Internship — Week 1)
+# Python Code Review Tool 
 
 A command-line and VS Code integrated code review tool that investigates Python source code using Large Language Models (LLMs) and safe Abstract Syntax Tree (AST) analysis.
 
