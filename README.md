@@ -174,8 +174,3 @@ All 12 unit tests pass out of the box with zero external dependencies.
 ```
 
 ---
-
-## ⚠️ Known Issues & Incomplete Work
-
-- **Live Code Pack Extraction**: The repository includes a representative test version of `order_service.py` reproducing the three test requests. When extracting the official `Week_1_Code_Pack.zip`, drop its files directly into `review-input/` to review the full 1,060-line version.
-- **Provider Quota Limits**: Free-tier Gemini and Groq accounts have daily rate limits. When live quotas are exhausted, the tool automatically records the event as `BLOCKED_QUOTA` and prompts the user to switch to `--provider mock` or wait for the quota window to reset.
