@@ -13,19 +13,6 @@ A command-line and VS Code integrated code review tool that investigates Python 
 5. **Zero Overwrite Storage**: Every review produces a unique timestamped report and structured JSON audit file.
 
 ---
-
-## 🛠️ Chosen LLM Providers & Free-Tier Selection
-
-This tool supports both free-tier cloud LLM providers and an offline deterministic mock provider:
-
-| Provider | Model | Free-Tier Characteristics | Best Use Case |
-| :--- | :--- | :--- | :--- |
-| **Google Gemini** | `gemini-1.5-flash` | Generous free tier (15 RPM / 1M tokens/min), massive 1M token context window for large codebases | Primary production review engine |
-| **Groq Cloud** | `llama-3.3-70b-versatile` | Ultra-fast inference (~300 tokens/s), free tier with 30 RPM | Real-time interactive reviews |
-| **Mock Provider** | `mock-reviewer-v1` | 100% offline, deterministic, zero credentials needed | CI/CD testing, offline evaluation, grading |
-
----
-
 ## 📋 System Requirements & Setup
 
 - **Python Version**: Python 3.11 or newer (compatible with Python standard library)
