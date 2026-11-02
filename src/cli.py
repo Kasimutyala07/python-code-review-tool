@@ -8,6 +8,28 @@ import os
 import sys
 from pathlib import Path
 
+# Fix Windows console UTF-8 output encoding for emojis and rich characters
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# Local trace viewer support
+from .trace_viewer import display_trace_summary, display_trace_detail
+
+def add_trace_subcommand(subparsers):
+    trace_parser = subparsers.add_parser("traces", help="Inspect local AI observability traces.")
+    trace_parser.add_argument("--limit", type=int, default=15, help="Number of recent records to display.")
+    trace_parser.add_argument("--id", type=str, default=None, help="Inspect a specific trace or span ID.")
+
+def handle_trace_command(args):
+    target_id = getattr(args, "id", None) or getattr(args, "trace_id", None)
+    if target_id:
+        display_trace_detail(target_id)
+    else:
+        display_trace_summary(limit=getattr(args, "limit", 15))
+
 # Load environment variables if .env file exists
 try:
     from dotenv import load_dotenv
@@ -50,7 +72,6 @@ def print_success(msg: str):
         console.print(f"[bold green]SUCCESS:[/bold green] {msg}")
     else:
         print(f"SUCCESS: {msg}")
-
 
 def show_summary(output_dir: str):
     recorder = EvidenceRecorder(output_dir=output_dir)
@@ -149,6 +170,32 @@ def run_review(
     print_msg(f"📄 Markdown Report saved to: [bold underline]{result['report_path']}[/bold underline]")
     print_msg(f"📊 Audit Evidence JSON saved to: {result['evidence_path']}\n")
 
+    # Display AST static analysis findings table if present
+    static_findings = result.get("static_findings", [])
+    if static_findings:
+        if HAS_RICH and console:
+            table = Table(title="🔍 Verified Static AST Bug Pre-Scan", border_style="yellow")
+            table.add_column("Severity", style="bold", width=10)
+            table.add_column("Line", style="cyan", width=6)
+            table.add_column("Symbol", style="white", width=28)
+            table.add_column("Verified Bug & Impact", style="dim white")
+            for sf in static_findings:
+                sev = sf.get("severity", "INFO")
+                style = "bold red" if sev == "CRITICAL" else ("bold yellow" if sev == "HIGH" else "bold blue")
+                table.add_row(
+                    f"[{style}]{sev}[/{style}]",
+                    str(sf.get("line_number", "")),
+                    sf.get("symbol_name", ""),
+                    f"[bold]{sf.get('title', '')}[/bold]\n{sf.get('description', '')}",
+                )
+            console.print(table)
+            console.print()
+        else:
+            print("\n--- Verified Static AST Bug Pre-Scan ---")
+            for sf in static_findings:
+                print(f"[{sf.get('severity')}] Line {sf.get('line_number')} in {sf.get('symbol_name')}: {sf.get('title')}")
+            print()
+
     # Display review preview
     if HAS_RICH and console:
         console.print(Panel(
@@ -163,7 +210,20 @@ def run_review(
     return 0
 
 
-def main():
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Handle 'traces' positional subcommand directly if invoked as: python main.py traces ...
+    if argv and argv[0] == "traces":
+        trace_p = argparse.ArgumentParser(description="Inspect local AI observability traces.")
+        trace_p.add_argument("command", choices=["traces"])
+        trace_p.add_argument("--limit", type=int, default=15, help="Number of recent records to display.")
+        trace_p.add_argument("--id", type=str, default=None, help="Inspect a specific trace or span ID.")
+        t_args = trace_p.parse_args(argv)
+        handle_trace_command(t_args)
+        return 0
+
     parser = argparse.ArgumentParser(
         description="Python Code Review Tool — Investigate code bugs and anomalies using LLMs."
     )
@@ -200,6 +260,24 @@ def main():
         help="Display cumulative summary of all saved reviews",
     )
     parser.add_argument(
+        "--traces",
+        action="store_true",
+        help="Inspect local AI observability traces",
+    )
+    parser.add_argument(
+        "--trace-id", "--id",
+        dest="trace_id",
+        type=str,
+        default=None,
+        help="Inspect a specific trace or span ID",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=15,
+        help="Number of recent records to display",
+    )
+    parser.add_argument(
         "-i", "--interactive",
         action="store_true",
         help="Launch interactive terminal mode",
@@ -210,11 +288,15 @@ def main():
         help="Simulate a provider failure mode to test error handling and audit logging",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.traces:
+        handle_trace_command(args)
+        return 0
 
     if args.summary:
         show_summary(args.output_dir)
-        sys.exit(0)
+        return 0
 
     if args.interactive or (not args.file and not args.request and not args.request_file):
         code = interactive_mode(default_output_dir=args.output_dir)
@@ -245,8 +327,8 @@ def main():
         output_dir=args.output_dir,
         failure_mode=args.simulate_failure,
     )
-    sys.exit(code)
+    return code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

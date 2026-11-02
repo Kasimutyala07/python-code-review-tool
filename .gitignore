@@ -44,3 +44,7 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Observability traces & runtime scratch folders
+.reviews/
+review-outputs/

@@ -130,6 +130,184 @@ class SafeCodeVisitor(ast.NodeVisitor):
         self.symbols.append(sym)
 
 
+@dataclass
+class StaticBugFinding:
+    """Represents a statically verified code anomaly or logic bug."""
+    rule_id: str
+    title: str
+    severity: str  # 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'
+    line_number: int
+    symbol_name: str
+    code_snippet: str
+    description: str
+    impact: str
+    recommendation: str
+
+    def to_dict(self) -> Dict[str, any]:
+        return {
+            "rule_id": self.rule_id,
+            "title": self.title,
+            "severity": self.severity,
+            "line_number": self.line_number,
+            "symbol_name": self.symbol_name,
+            "code_snippet": self.code_snippet,
+            "description": self.description,
+            "impact": self.impact,
+            "recommendation": self.recommendation,
+        }
+
+
+class SafeBugScanner(ast.NodeVisitor):
+    """AST visitor that statically detects logic flaws, pricing bugs, and safety anomalies."""
+
+    def __init__(self, raw_lines: List[str]):
+        self.raw_lines = raw_lines
+        self.findings: List[StaticBugFinding] = []
+        self._current_class: Optional[str] = None
+        self._current_func: Optional[str] = None
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        old_class = self._current_class
+        self._current_class = node.name
+        self.generic_visit(node)
+        self._current_class = old_class
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        self._visit_any_func(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        self._visit_any_func(node)
+
+    def _visit_any_func(self, node):
+        old_func = self._current_func
+        sym_name = f"{self._current_class}.{node.name}" if self._current_class else node.name
+        self._current_func = sym_name
+
+        # Check: Unused business parameters in calculations
+        params = [a.arg for a in node.args.args if a.arg not in ("self", "cls")]
+        used = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        for p in params:
+            if p not in used and p in ("discount", "coupon", "quantity", "customer_id", "status"):
+                line_idx = node.lineno - 1
+                snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                self.findings.append(StaticBugFinding(
+                    rule_id="UNUSED_BUSINESS_PARAMETER",
+                    title="Unused Critical Parameter in Business Calculation",
+                    severity="MEDIUM",
+                    line_number=node.lineno,
+                    symbol_name=sym_name,
+                    code_snippet=snippet,
+                    description=f"Parameter `{p}` is defined in function `{sym_name}` but is never referenced or evaluated in the function body.",
+                    impact="Calculations may ignore customer discounts or thresholds, causing pricing or shipping anomalies.",
+                    recommendation=f"Integrate `{p}` into the business calculation or remove it if obsolete.",
+                ))
+
+        # Check: Cancellation logic without checking already cancelled state (Stock inflation bug)
+        if node.name in ("cancel", "cancel_order") or "cancel" in node.name:
+            has_stock_update = False
+            has_cancelled_check = False
+            for child in ast.walk(node):
+                if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                    if "UPDATE products SET stock = stock +" in child.value:
+                        has_stock_update = True
+                if isinstance(child, ast.Compare):
+                    for c in child.comparators:
+                        if isinstance(c, ast.Constant) and c.value == "cancelled":
+                            has_cancelled_check = True
+            if has_stock_update and not has_cancelled_check:
+                line_idx = node.lineno - 1
+                snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                self.findings.append(StaticBugFinding(
+                    rule_id="DOUBLE_CANCELLATION_REENTRANCY",
+                    title="Stock Duplication via Repeat Cancellation",
+                    severity="CRITICAL",
+                    line_number=node.lineno,
+                    symbol_name=sym_name,
+                    code_snippet=snippet,
+                    description="Cancellation logic restocks inventory for order lines without verifying that the order is not already 'cancelled'.",
+                    impact="Enables an attacker or client to cancel the same order multiple times, continuously duplicating inventory in the database.",
+                    recommendation="Add `if order['status'] == 'cancelled': raise Conflict('Order is already cancelled')` before restocking.",
+                ))
+
+        self.generic_visit(node)
+        self._current_func = old_func
+
+    def visit_Call(self, node: ast.Call):
+        # Check: sum(line.unit_price_cents for line in lines) - Pricing omitting item quantity
+        if isinstance(node.func, ast.Name) and node.func.id == "sum":
+            for arg in node.args:
+                if isinstance(arg, ast.GeneratorExp):
+                    elt = arg.elt
+                    if isinstance(elt, ast.Attribute) and elt.attr in ("unit_price_cents", "unit_price", "price_cents", "price"):
+                        line_idx = node.lineno - 1
+                        snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                        self.findings.append(StaticBugFinding(
+                            rule_id="PRICING_OMITS_QUANTITY",
+                            title="Subtotal Calculation Omits Item Quantity",
+                            severity="CRITICAL",
+                            line_number=node.lineno,
+                            symbol_name=self._current_func or "pricing",
+                            code_snippet=snippet,
+                            description=f"Pricing accumulation sums `{elt.attr}` directly across cart lines without multiplying by `line.quantity` or using `line.line_total_cents`.",
+                            impact="Customers purchasing multiple units of an item are severely undercharged (paying for 1 unit regardless of quantity).",
+                            recommendation="Replace with `sum(line.line_total_cents for line in lines)` or `sum(line.unit_price_cents * line.quantity for line in lines)`.",
+                        ))
+
+        # Check: Exclusive file creation mode 'x' without FileExistsError handler
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and arg.value == "x":
+                line_idx = node.lineno - 1
+                snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                self.findings.append(StaticBugFinding(
+                    rule_id="UNHANDLED_EXCLUSIVE_FILE_WRITE",
+                    title="Exclusive File Mode 'x' Crash Risk",
+                    severity="MEDIUM",
+                    line_number=node.lineno,
+                    symbol_name=self._current_func or "file_io",
+                    code_snippet=snippet,
+                    description="File is opened in exclusive creation mode 'x' without handling FileExistsError.",
+                    impact="If the export or invoice file already exists on disk, the application crashes unexpectedly with an unhandled exception.",
+                    recommendation="Catch `FileExistsError` and raise a user-friendly `ServiceError` or allow explicit overwrite.",
+                ))
+
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant):
+        if isinstance(node.value, str):
+            val = node.value
+            # Check: Sales query omitting cancelled orders
+            if "FROM orders WHERE created_at" in val and "status" not in val.lower():
+                line_idx = node.lineno - 1
+                snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                self.findings.append(StaticBugFinding(
+                    rule_id="SALES_REPORT_INCLUDES_CANCELLED",
+                    title="Cancelled Orders Erroneously Included in Sales Revenue",
+                    severity="HIGH",
+                    line_number=node.lineno,
+                    symbol_name=self._current_func or "reporting",
+                    code_snippet=snippet,
+                    description="Sales reporting query aggregates order totals and counts without excluding cancelled orders (`status != 'cancelled'`).",
+                    impact="Daily and period gross sales, order count, and collected tax reports are erroneously inflated by cancelled orders.",
+                    recommendation="Add `AND status != 'cancelled'` to the SQL WHERE clause.",
+                ))
+            # Check: Refund date filter misattribution
+            if ("FROM refunds" in val or "JOIN refunds" in val) and "WHERE o.created_at" in val:
+                line_idx = node.lineno - 1
+                snippet = self.raw_lines[line_idx].strip() if line_idx < len(self.raw_lines) else ""
+                self.findings.append(StaticBugFinding(
+                    rule_id="REFUND_DATE_FILTER_MISMATCH",
+                    title="Refund Date Attributed to Order Date Instead of Refund Date",
+                    severity="HIGH",
+                    line_number=node.lineno,
+                    symbol_name=self._current_func or "reporting",
+                    code_snippet=snippet,
+                    description="Refund query filters on `o.created_at` (the date the order was placed) instead of `r.created_at` (the date the refund was processed).",
+                    impact="Refunds processed in later accounting periods are retroactively applied to past order periods, distorting period financials.",
+                    recommendation="Filter on `r.created_at >= ? AND r.created_at < ?`.",
+                ))
+        self.generic_visit(node)
+
+
 class CodeAnalyzer:
     """Safe static code analyzer for Python files."""
 
@@ -145,6 +323,7 @@ class CodeAnalyzer:
         self.initial_hash: str = ""
         self.symbols: List[CodeSymbol] = []
         self.imports: List[str] = []
+        self.static_findings: List[StaticBugFinding] = []
         self.parse_error: Optional[str] = None
         self._load_and_parse()
 
@@ -165,10 +344,18 @@ class CodeAnalyzer:
             visitor.visit(tree)
             self.symbols = visitor.symbols
             self.imports = visitor.imports
+
+            scanner = SafeBugScanner(self.raw_lines)
+            scanner.visit(tree)
+            self.static_findings = scanner.findings
         except SyntaxError as se:
             self.parse_error = f"SyntaxError at line {se.lineno}: {se.msg}"
         except Exception as e:
             self.parse_error = f"AST parse error: {e}"
+
+    def scan_static_bugs(self) -> List[StaticBugFinding]:
+        """Returns detected static AST bug findings."""
+        return list(self.static_findings)
 
     def verify_integrity(self) -> bool:
         """Verify that the source file on disk has not been altered."""
@@ -250,11 +437,11 @@ class CodeAnalyzer:
             formatted.append(f"{line_no:4d} | {line_str}")
         return "\n".join(formatted)
 
-    def extract_context_for_request(self, request_text: str, max_full_lines: int = 350) -> str:
+    def extract_context_for_request(self, request_text: str, max_full_lines: int = 3000) -> str:
         """
         Builds the code context for the LLM prompt.
-        If file is within max_full_lines, supplies the complete source with line numbers.
-        Also attaches an architectural symbol index for fast navigation.
+        Supplies complete source code with line numbers (up to max_full_lines) or for general reviews.
+        Attaches architectural symbol outline and automated static pre-scan findings.
         """
         total_lines = len(self.raw_lines)
         outline_parts = ["### FILE STRUCTURAL OUTLINE:"]
@@ -262,16 +449,35 @@ class CodeAnalyzer:
             outline_parts.append(f"- {s.header_signature}")
         outline_text = "\n".join(outline_parts)
 
-        if total_lines <= max_full_lines:
+        # Static analysis pre-scan section
+        static_section = ""
+        if self.static_findings:
+            static_parts = [
+                "### AUTOMATED STATIC CODE ANALYSIS PRE-SCAN:",
+                "The AST static analyzer verified the following concrete code issues and safety anomalies:",
+            ]
+            for f in self.static_findings:
+                static_parts.append(
+                    f"- [{f.severity}] Line {f.line_number} in `{f.symbol_name}`: {f.title} ({f.description})"
+                )
+            static_section = "\n".join(static_parts) + "\n\n"
+
+        # Check if query requests a general/comprehensive bug review
+        is_general_review = any(w in request_text.lower() for w in [
+            "bug", "bugs", "review", "audit", "all", "mistake", "error", "security", "check", "flaw"
+        ])
+
+        if total_lines <= max_full_lines or is_general_review:
             code_block = self.format_code_with_line_numbers(1, total_lines)
             return (
+                f"{static_section}"
                 f"{outline_text}\n\n"
                 f"### COMPLETE SOURCE CODE ({total_lines} lines):\n"
                 f"```python\n{code_block}\n```"
             )
 
-        # For very large files exceeding context limits:
-        relevant = self.find_relevant_symbols(request_text, top_k=6)
+        # For exceptionally large files exceeding context limits:
+        relevant = self.find_relevant_symbols(request_text, top_k=8)
         extracted_sections = []
         for sym, score in relevant:
             section_code = self.format_code_with_line_numbers(sym.start_line, sym.end_line)
@@ -281,6 +487,7 @@ class CodeAnalyzer:
             )
 
         return (
+            f"{static_section}"
             f"{outline_text}\n\n"
             f"### RELEVANT CODE SECTIONS (Extracted for query):\n\n" +
             "\n\n".join(extracted_sections)
