@@ -141,9 +141,10 @@ def interactive_mode(default_output_dir: str = "evidence"):
         print_error("Request text cannot be empty. Exiting.")
         return 2
 
-    provider_choice = input("\nProvider [1=Gemini (default), 2=Groq, 3=Mock/Offline]: ").strip()
-    provider_map = {"1": "gemini", "2": "groq", "3": "mock"}
-    provider_name = provider_map.get(provider_choice, "gemini")
+    default_p = os.getenv("LLM_PROVIDER") or ("groq" if os.getenv("GROQ_API_KEY") else "mock")
+    provider_choice = input(f"\nProvider [1=Groq (default), 2=Gemini, 3=Mock/Offline]: ").strip()
+    provider_map = {"1": "groq", "2": "gemini", "3": "mock"}
+    provider_name = provider_map.get(provider_choice, default_p)
 
     return run_review(
         file_path=target_path,
@@ -284,8 +285,8 @@ def main(argv=None):
     parser.add_argument(
         "-p", "--provider",
         choices=["gemini", "groq", "mock"],
-        default="mock",
-        help="LLM Provider to use (default: mock for deterministic evaluation)",
+        default=None,
+        help="LLM Provider to use (default: auto-detected from .env / groq / gemini)",
     )
     parser.add_argument(
         "-m", "--model",
