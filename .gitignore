@@ -48,3 +48,5 @@ Thumbs.db
 # Observability traces & runtime scratch folders
 .reviews/
 review-outputs/
+evidence/*.json
+evidence/*.md

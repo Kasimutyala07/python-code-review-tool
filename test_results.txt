@@ -1,12 +1,12 @@
 ======================================================================
-TEST EXECUTION RUN - 2026-11-02 17:20:24
+TEST EXECUTION RUN - 2026-11-03 14:08:38
 ======================================================================
 Python Version: 3.13.0
-Total Tests Run: 12
+Total Tests Run: 21
 Errors: 0
 Failures: 0
 Skipped: 0
-Duration: 3.186s
+Duration: 6.425s
 Overall Status: PASSED
 ----------------------------------------------------------------------
 Detailed Output:
@@ -34,9 +34,27 @@ test_rejects_blank_request (test_provider_failures.TestProviderFailuresAndEviden
 Verifies empty or whitespace-only requests are rejected upfront. ... ok
 test_source_preservation_guarantee (test_provider_failures.TestProviderFailuresAndEvidence.test_source_preservation_guarantee)
 Verifies that the original source code remains bit-for-bit identical before and after review. ... ok
+test_avoid_sending_entire_repo (test_repo_investigation.TestRepoInvestigation.test_avoid_sending_entire_repo)
+Verifies build_repo_context extracts targeted snippets and does NOT send full source code. ... ok
+test_cli_insufficient_evidence_query (test_repo_investigation.TestRepoInvestigation.test_cli_insufficient_evidence_query)
+Verifies CLI execution with an irrelevant query displays insufficient evidence notification. ... ok
+test_cli_repo_checkout_investigation (test_repo_investigation.TestRepoInvestigation.test_cli_repo_checkout_investigation)
+Verifies end-to-end CLI execution on review-input repository with checkout request. ... ok
+test_insufficient_evidence_flagged (test_repo_investigation.TestRepoInvestigation.test_insufficient_evidence_flagged)
+Verifies queries about concepts missing from the repo trigger insufficient_evidence=True. ... ok
+test_relevance_search_and_ranking (test_repo_investigation.TestRepoInvestigation.test_relevance_search_and_ranking)
+Verifies relevance scoring ranks checkout.py first for checkout-related queries. ... ok
+test_repo_file_discovery_and_exclusion (test_repo_investigation.TestRepoInvestigation.test_repo_file_discovery_and_exclusion)
+Verifies only relevant .py files are indexed, ignoring .git, venv, and non-py files. ... ok
+test_repo_immutability_and_tampering_detection (test_repo_investigation.TestRepoInvestigation.test_repo_immutability_and_tampering_detection)
+Verifies read-only cryptographic SHA256 integrity detection across the repository. ... ok
+test_repo_observability_traces (test_repo_investigation.TestRepoInvestigation.test_repo_observability_traces)
+Verifies multi-file investigation captures file_search spans, model calls, token usage, and errors. ... ok
+test_tampering_halts_review_with_error (test_repo_investigation.TestRepoInvestigation.test_tampering_halts_review_with_error)
+Verifies CodeReviewEngine detects file modifications and aborts without recording successful artifacts. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 3.186s
+Ran 21 tests in 6.425s
 
 OK
 

@@ -95,11 +95,11 @@ def show_summary(output_dir: str):
 
 def interactive_mode(default_output_dir: str = "evidence"):
     print_msg("\n=== Interactive Python Code Review Tool ===", style="bold cyan")
-    print_msg("Type the path to the Python file and your question/problem description.\n")
+    print_msg("Type the path to the Python file or repository directory and your question/problem description.\n")
 
-    file_path = input("Enter path to Python file (e.g., review-input/order_service.py): ").strip()
-    if not file_path:
-        print_error("No file provided. Exiting.")
+    target_path = input("Enter path to Python file or repository directory (e.g., review-input): ").strip()
+    if not target_path:
+        print_error("No file or directory provided. Exiting.")
         return 2
 
     print("\nEnter your review request or problem description (press Enter twice to finish):")
@@ -123,7 +123,7 @@ def interactive_mode(default_output_dir: str = "evidence"):
     provider_name = provider_map.get(provider_choice, "gemini")
 
     return run_review(
-        file_path=file_path,
+        file_path=target_path,
         request_text=request_text,
         provider_name=provider_name,
         output_dir=default_output_dir,
@@ -145,9 +145,14 @@ def run_review(
         failure_mode=failure_mode,
     )
 
+    target_path = Path(file_path).resolve()
+    is_dir = target_path.is_dir()
+    target_label = "Target Repository" if is_dir else "Target File"
+    mode_label = " (Multi-file Repository Mode)" if is_dir else ""
+
     if HAS_RICH and console:
         console.print(Panel(
-            f"[bold]Target File:[/bold] {file_path}\n"
+            f"[bold]{target_label}:[/bold] {file_path}{mode_label}\n"
             f"[bold]Provider:[/bold] {provider.provider_name} ({provider.model_name})\n"
             f"[bold]Output Directory:[/bold] {output_dir}\n"
             f"[bold]Request:[/bold] {request_text[:120]}...",
@@ -155,7 +160,7 @@ def run_review(
             border_style="blue",
         ))
     else:
-        print(f"\nInitiating review on {file_path} using {provider.provider_name}...")
+        print(f"\nInitiating review on {file_path}{mode_label} using {provider.provider_name}...")
 
     engine = CodeReviewEngine(provider=provider, output_dir=output_dir)
     result = engine.review(source_file=file_path, user_request=request_text)
@@ -167,6 +172,13 @@ def run_review(
         return 1
 
     print_success(f"Review completed successfully in {result['duration_sec']}s!")
+    if result.get("is_repo_mode"):
+        scanned = result.get("files_scanned", 0)
+        selected = result.get("selected_files", [])
+        print_msg(f"📁 Repository Scanned: {scanned} files | Selected Candidate Files: {selected}")
+        if result.get("insufficient_evidence"):
+            print_msg("⚠️  Notice: Insufficient evidence detected in scanned codebase for this query.")
+
     print_msg(f"📄 Markdown Report saved to: [bold underline]{result['report_path']}[/bold underline]")
     print_msg(f"📊 Audit Evidence JSON saved to: {result['evidence_path']}\n")
 
@@ -176,15 +188,16 @@ def run_review(
         if HAS_RICH and console:
             table = Table(title="🔍 Verified Static AST Bug Pre-Scan", border_style="yellow")
             table.add_column("Severity", style="bold", width=10)
-            table.add_column("Line", style="cyan", width=6)
-            table.add_column("Symbol", style="white", width=28)
+            table.add_column("Location", style="cyan", width=24)
+            table.add_column("Symbol", style="white", width=24)
             table.add_column("Verified Bug & Impact", style="dim white")
             for sf in static_findings:
                 sev = sf.get("severity", "INFO")
                 style = "bold red" if sev == "CRITICAL" else ("bold yellow" if sev == "HIGH" else "bold blue")
+                loc = f"{sf.get('file_path', '')}:{sf.get('line_number', '')}" if sf.get('file_path') else f"Line {sf.get('line_number', '')}"
                 table.add_row(
                     f"[{style}]{sev}[/{style}]",
-                    str(sf.get("line_number", "")),
+                    loc,
                     sf.get("symbol_name", ""),
                     f"[bold]{sf.get('title', '')}[/bold]\n{sf.get('description', '')}",
                 )
@@ -193,7 +206,8 @@ def run_review(
         else:
             print("\n--- Verified Static AST Bug Pre-Scan ---")
             for sf in static_findings:
-                print(f"[{sf.get('severity')}] Line {sf.get('line_number')} in {sf.get('symbol_name')}: {sf.get('title')}")
+                loc = f"{sf.get('file_path', '')}:{sf.get('line_number', '')}" if sf.get('file_path') else f"Line {sf.get('line_number', '')}"
+                print(f"[{sf.get('severity')}] {loc} in {sf.get('symbol_name')}: {sf.get('title')}")
             print()
 
     # Display review preview
@@ -225,11 +239,16 @@ def main(argv=None):
         return 0
 
     parser = argparse.ArgumentParser(
-        description="Python Code Review Tool — Investigate code bugs and anomalies using LLMs."
+        description="Python Code Review Tool — Investigate code bugs and anomalies across files using LLMs."
     )
     parser.add_argument(
         "-f", "--file",
-        help="Path to the Python source file to review (e.g., review-input/order_service.py)",
+        help="Path to the Python source file or repository directory to review (e.g., review-input/order_service.py)",
+    )
+    parser.add_argument(
+        "-d", "--repo", "--dir",
+        dest="repo",
+        help="Path to repository or directory to investigate (multi-file repository mode)",
     )
     parser.add_argument(
         "-r", "--request",
@@ -298,12 +317,13 @@ def main(argv=None):
         show_summary(args.output_dir)
         return 0
 
-    if args.interactive or (not args.file and not args.request and not args.request_file):
+    target_path = args.repo or args.file
+    if args.interactive or (not target_path and not args.request and not args.request_file):
         code = interactive_mode(default_output_dir=args.output_dir)
         sys.exit(code)
 
-    if not args.file:
-        print_error("Missing required argument: --file / -f")
+    if not target_path:
+        print_error("Missing required argument: --file / -f or --repo / -d")
         parser.print_help()
         sys.exit(2)
 
@@ -320,7 +340,7 @@ def main(argv=None):
         sys.exit(2)
 
     code = run_review(
-        file_path=args.file,
+        file_path=target_path,
         request_text=request_text,
         provider_name=args.provider,
         model_name=args.model,

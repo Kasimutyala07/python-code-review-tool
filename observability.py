@@ -20,7 +20,7 @@ class Span:
     trace_id: str
     span_id: str
     name: str
-    span_type: str  # "span", "generation", or "pipeline"
+    span_type: str  # "span", "generation", "pipeline", or "search"
     parent_id: str | None = None
     start_time: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -37,6 +37,8 @@ class Span:
     tokens: dict | None = None  # prompt, completion, total
     cost_usd: float = 0.0
     error: str | None = None
+    # Codebase search observability fields
+    search_metrics: dict | None = None  # files_scanned, files_matched, top_files, query_terms
 
 
 class Tracer:

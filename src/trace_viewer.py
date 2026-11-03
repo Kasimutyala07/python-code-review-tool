@@ -40,9 +40,9 @@ def display_trace_summary(limit: int = 15):
     for ev in evals:
         eval_map[ev["span_id"]] = f"{ev['score_name']}={ev['value']:.2f}"
 
-    print("\n" + "=" * 105)
-    print(f"{'TIMESTAMP':<20} | {'NAME':<24} | {'TYPE':<12} | {'LATENCY':<10} | {'TOKENS':<8} | {'COST ($)':<10} | {'EVAL'}")
-    print("=" * 105)
+    print("\n" + "=" * 110)
+    print(f"{'TIMESTAMP':<20} | {'NAME':<24} | {'TYPE':<12} | {'LATENCY':<10} | {'TOKENS / INFO':<14} | {'COST / MATCH':<12} | {'EVAL'}")
+    print("=" * 110)
 
     recent_spans = spans[-limit:]
     for s in recent_spans:
@@ -54,9 +54,18 @@ def display_trace_summary(limit: int = 15):
         cost = f"${s.get('cost_usd', 0):.6f}" if s.get("cost_usd") else "-"
         eval_score = eval_map.get(s.get("span_id", ""), "-")
 
-        print(f"{ts:<20} | {name:<24} | {stype:<12} | {duration:<10} | {tokens:<8} | {cost:<10} | {eval_score}")
+        # Custom formatting for search spans
+        if stype.startswith("search"):
+            out = s.get("outputs", {})
+            scanned = out.get("files_scanned")
+            if scanned is not None:
+                tokens = f"{scanned} files"
+            top_cnt = len(out.get("top_files", []))
+            cost = f"match:{top_cnt}"
 
-    print("=" * 105)
+        print(f"{ts:<20} | {name:<24} | {stype:<12} | {duration:<10} | {tokens:<14} | {cost:<12} | {eval_score}")
+
+    print("=" * 110)
 
 
 def display_trace_detail(trace_id: str):
@@ -68,14 +77,20 @@ def display_trace_detail(trace_id: str):
         return
 
     print(f"\nDetailed View for ID: {trace_id}")
-    print("-" * 60)
+    print("-" * 65)
     for s in matching:
         print(f"[{s.get('span_type', '').upper()}] {s.get('name')} (Status: {s.get('status')})")
         print(f"  Duration: {s.get('duration_ms')}ms")
         if s.get("tokens"):
             print(f"  Tokens: {s['tokens']}")
             print(f"  Cost: ${s.get('cost_usd', 0):.6f}")
+        if s.get("span_type") == "search" or s.get("search_metrics"):
+            metrics = s.get("search_metrics") or s.get("outputs", {})
+            print(f"  Search Metrics: Scanned={metrics.get('files_scanned', 0)} files, Matched={metrics.get('files_matched', 0)} files")
+            if metrics.get("top_files"):
+                print(f"  Top Files Selected: {metrics.get('top_files')}")
+            if metrics.get("insufficient_evidence"):
+                print("  Warning: Insufficient evidence detected for query terms.")
         if s.get("error"):
             print(f"  Error: {s['error']}")
         print()
-
