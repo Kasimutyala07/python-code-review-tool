@@ -93,14 +93,37 @@ def show_summary(output_dir: str):
             print(f"{k}: {v}")
 
 
+def resolve_user_path(p_str: str) -> Path:
+    """Cleans up surrounding quotes and intelligently resolves paths including Desktop references."""
+    cleaned = p_str.strip().strip('"\'').strip()
+    p = Path(cleaned).expanduser()
+    if p.exists():
+        return p
+
+    home_desktop = Path.home() / "Desktop"
+    lower = cleaned.lower()
+    if lower.startswith("desktop/") or lower.startswith("desktop\\"):
+        candidate = home_desktop / cleaned[8:]
+        if candidate.exists():
+            return candidate.resolve()
+
+    candidate2 = home_desktop / cleaned
+    if candidate2.exists():
+        return candidate2.resolve()
+
+    return p
+
+
 def interactive_mode(default_output_dir: str = "evidence"):
     print_msg("\n=== Interactive Python Code Review Tool ===", style="bold cyan")
     print_msg("Type the path to the Python file or repository directory and your question/problem description.\n")
 
-    target_path = input("Enter path to Python file or repository directory (e.g., review-input): ").strip()
-    if not target_path:
+    raw_path = input("Enter path to Python file or repository directory (e.g., review-input): ").strip()
+    if not raw_path:
         print_error("No file or directory provided. Exiting.")
         return 2
+
+    target_path = str(resolve_user_path(raw_path))
 
     print("\nEnter your review request or problem description (press Enter twice to finish):")
     lines = []
@@ -317,7 +340,8 @@ def main(argv=None):
         show_summary(args.output_dir)
         return 0
 
-    target_path = args.repo or args.file
+    raw_target = args.repo or args.file
+    target_path = str(resolve_user_path(raw_target)) if raw_target else None
     if args.interactive or (not target_path and not args.request and not args.request_file):
         code = interactive_mode(default_output_dir=args.output_dir)
         sys.exit(code)

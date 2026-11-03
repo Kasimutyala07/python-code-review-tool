@@ -32,8 +32,15 @@ def get_llm_provider(
 
     if provider_type == "groq" or (not provider_type and os.getenv("GROQ_API_KEY")):
         key = api_key or os.getenv("GROQ_API_KEY")
-        model = model_name or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        return GroqProvider(api_key=key, model_name=model)
+        raw_model = (model_name or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")).strip()
+        cleaned_model = raw_model.lower().replace(" ", "").replace("-", "")
+        if cleaned_model in ("openaigptoss120b", "gptoss120b"):
+            raw_model = "openai/gpt-oss-120b"
+        elif cleaned_model in ("openaigptoss20b", "gptoss20b"):
+            raw_model = "openai/gpt-oss-20b"
+        elif " " in raw_model or not raw_model:
+            raw_model = "openai/gpt-oss-120b"
+        return GroqProvider(api_key=key, model_name=raw_model)
 
     if provider_type == "gemini" or (not provider_type and os.getenv("GEMINI_API_KEY")):
         key = api_key or os.getenv("GEMINI_API_KEY")

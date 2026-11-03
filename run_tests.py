@@ -10,6 +10,13 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
+# Fix Windows console UTF-8 output encoding
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def run_all_tests():
     project_root = Path(__file__).parent.resolve()
