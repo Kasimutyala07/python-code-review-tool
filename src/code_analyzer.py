@@ -713,19 +713,43 @@ class RepoAnalyzer:
 
         # Domain-specific terms (excluding generic problem/action words)
         generic_words = {
-            "crash", "error", "fail", "failed", "failing", "exception", "bug", "problem",
-            "issue", "broken", "why", "what", "how", "fix", "check", "code"
+            "crash", "error", "fail", "failed", "failing", "exception", "bug", "bugs",
+            "problem", "issue", "issues", "broken", "why", "what", "how", "fix", "check",
+            "code", "find", "review", "audit", "scan", "inspect", "all", "the", "from"
         }
         domain_terms = [t for t in terms if t not in generic_words]
+        is_general_audit = (len(domain_terms) == 0 and any(w in query.lower() for w in ["bug", "bugs", "review", "audit", "check", "scan", "code", "find", "all"]))
 
-        # Determine if evidence is insufficient:
-        # - No files matched
-        # - Or top file has very low score (< 5.0)
-        # - Or none of the domain-specific terms matched in the repository
-        # - Or query has >= 3 domain terms and fewer than 2 matched without symbol matches
+        # For general audit requests, score discovered files based on symbols, entry points, and static findings
+        if is_general_audit:
+            for fpath in self.discovered_files:
+                try:
+                    rel_path = str(fpath.relative_to(self.repo_dir)).replace("\\", "/")
+                except ValueError:
+                    rel_path = fpath.name
+                if not any(r.file_path == fpath for r in results):
+                    analyzer = self.get_analyzer(fpath)
+                    score = 10.0 + len(analyzer.symbols) * 2.0 + len(analyzer.static_findings) * 5.0
+                    if any(ep in rel_path.lower() for ep in ["main.py", "app.py", "server.py", "index.py"]):
+                        score += 15.0
+                    results.append(RepoSearchResult(
+                        file_path=fpath,
+                        relative_path=rel_path,
+                        relevance_score=score,
+                        matched_symbols=[(s, 5.0) for s in analyzer.symbols[:4]],
+                        matched_lines=[],
+                        analyzer=analyzer,
+                        distinct_terms_count=1,
+                    ))
+
+        results.sort(key=lambda r: r.relevance_score, reverse=True)
+        top_results = results[:max_files]
+
         insufficient_evidence = False
         if not top_results:
             insufficient_evidence = True
+        elif is_general_audit:
+            insufficient_evidence = False
         else:
             top = top_results[0]
             matched_terms_in_top = set(
@@ -800,6 +824,14 @@ class RepoAnalyzer:
             for lineno, _ in res.matched_lines[:8]:
                 for l in range(max(1, lineno - 5), min(len(res.analyzer.raw_lines) + 1, lineno + 6)):
                     lines_to_include.add(l)
+
+            # Fallback if no specific lines matched (e.g. general audit): include key symbols or first lines
+            if not lines_to_include:
+                if res.analyzer.symbols:
+                    for sym in res.analyzer.symbols[:3]:
+                        lines_to_include.update(range(sym.start_line, min(sym.start_line + 45, sym.end_line + 1)))
+                else:
+                    lines_to_include.update(range(1, min(60, len(res.analyzer.raw_lines) + 1)))
 
             # Cap total lines per file to prevent prompt explosion
             sorted_lines = sorted(lines_to_include)[:max_lines_per_file]

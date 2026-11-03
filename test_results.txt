@@ -1,12 +1,12 @@
 ======================================================================
-TEST EXECUTION RUN - 2026-11-03 18:04:52
+TEST EXECUTION RUN - 2026-11-03 18:09:13
 ======================================================================
 Python Version: 3.13.0
 Total Tests Run: 21
 Errors: 0
 Failures: 0
 Skipped: 0
-Duration: 8.509s
+Duration: 8.074s
 Overall Status: PASSED
 ----------------------------------------------------------------------
 Detailed Output:
@@ -54,7 +54,7 @@ test_tampering_halts_review_with_error (test_repo_investigation.TestRepoInvestig
 Verifies CodeReviewEngine detects file modifications and aborts without recording successful artifacts. ... ok
 
 ----------------------------------------------------------------------
-Ran 21 tests in 8.509s
+Ran 21 tests in 8.074s
 
 OK
 

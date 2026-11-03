@@ -7,12 +7,20 @@ Instrumented with in-built observability tracing.
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import time
 
 from observability import tracer, trace_span
 from .code_analyzer import CodeAnalyzer, RepoAnalyzer, RepoSearchResult
 from .evidence import EvidenceRecorder
 from .providers.base import BaseLLMProvider, LLMResponse
 
+
+# Model pricing table per 1M tokens (Input USD, Output USD)
+PRICING_TABLE = {
+    "gemini-2.5-flash": (0.075, 0.30),
+    "gemini-1.5-pro": (1.25, 5.00),
+    "default": (0.10, 0.40),
+}
 
 SYSTEM_REVIEW_PROMPT = """You are an expert Python code reviewer and software forensics investigator.
 Your task is to analyze Python code across a repository or source file in response to a developer's request.
@@ -41,6 +49,13 @@ class CodeReviewEngine:
     def __init__(self, provider: BaseLLMProvider, output_dir: str | Path = "evidence"):
         self.provider = provider
         self.recorder = EvidenceRecorder(output_dir=output_dir)
+
+    def _calculate_cost(self, model_name: str, prompt_tok: int, comp_tok: int) -> float:
+        """Calculates approximate request cost based on active model rates."""
+        rates = PRICING_TABLE.get(model_name.lower(), PRICING_TABLE["default"])
+        input_cost = (prompt_tok / 1_000_000) * rates[0]
+        output_cost = (comp_tok / 1_000_000) * rates[1]
+        return round(input_cost + output_cost, 6)
 
     @trace_span(name="ast_static_analysis")
     def _run_analyzer(self, target_path: Path) -> CodeAnalyzer:
@@ -74,42 +89,46 @@ class CodeReviewEngine:
         system_prompt: str,
         user_prompt: str,
     ) -> LLMResponse:
-        """
-        Manages the generation span to record model parameters,
-        prompt/completion tokens, pricing, and latency.
-        """
+        """Manages generation span recording parameters, token metrics, latency, and costs."""
         model_name = getattr(self.provider, "model_name", "unknown-model")
         span = tracer.start_span(
             name="llm_code_review",
             span_type="generation",
-            inputs={"system_prompt": system_prompt[:200] + "...", "user_prompt": user_prompt[:300] + "..."},
+            inputs={
+                "system_prompt_preview": system_prompt[:150] + "...",
+                "user_prompt_len": len(user_prompt),
+                "user_prompt_preview": user_prompt[:250] + "...",
+            },
             metadata={"model": model_name},
         )
         span.model = model_name
 
         try:
+            start_t = time.perf_counter()
             response: LLMResponse = self.provider.generate(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
             )
+            elapsed_sec = round(time.perf_counter() - start_t, 3)
 
             prompt_tok = getattr(response, "prompt_tokens", 0) or 0
             comp_tok = getattr(response, "completion_tokens", 0) or 0
             total_tok = getattr(response, "total_tokens", 0) or (prompt_tok + comp_tok)
-
-            # Gemini 2.5 Flash pricing benchmark ($0.075 / 1M input, $0.30 / 1M output)
-            cost = (prompt_tok * 0.000000075) + (comp_tok * 0.00000030)
 
             span.tokens = {
                 "prompt": prompt_tok,
                 "completion": comp_tok,
                 "total": total_tok,
             }
-            span.cost_usd = round(cost, 6)
+            span.cost_usd = self._calculate_cost(model_name, prompt_tok, comp_tok)
 
             tracer.end_span(
                 span,
-                outputs={"success": response.success, "duration_sec": response.duration_sec},
+                outputs={
+                    "success": response.success,
+                    "duration_sec": getattr(response, "duration_sec", elapsed_sec),
+                    "token_count": total_tok,
+                },
                 status="success" if response.success else "error",
                 error=response.error_message,
             )
@@ -134,7 +153,6 @@ class CodeReviewEngine:
                 matched += 1
 
         compliance_ratio = matched / len(mandatory_indicators)
-
         tracer.attach_score(
             span_id=root_span_id,
             score_name="prompt_rule_compliance",
@@ -149,12 +167,10 @@ class CodeReviewEngine:
         validation_note: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Executes a code review on the target Python file or repository directory.
-        Supports single-file analysis and multi-file repository investigation.
+        Executes a non-destructive code review on a single file or an entire repository.
         """
         target_path = Path(source_file).resolve()
 
-        # Step 1: Input Validation
         if not target_path.exists():
             return {
                 "success": False,
@@ -167,29 +183,28 @@ class CodeReviewEngine:
         if not cleaned_request:
             return {
                 "success": False,
-                "error": "User request is blank or empty. Please describe a problem or enter a review request.",
+                "error": "User request is blank or empty. Please describe an issue or query.",
                 "report_path": None,
                 "evidence_path": None,
             }
 
         is_directory_mode = target_path.is_dir()
+        pipeline_span_name = "repo_review_pipeline" if is_directory_mode else "file_review_pipeline"
 
-        # =============================================================
-        # Mode A: Multi-File Repository Investigation
-        # =============================================================
-        if is_directory_mode:
-            root_span = tracer.start_span(
-                name="repo_review_pipeline",
-                span_type="pipeline",
-                inputs={"repo_path": str(target_path), "request": cleaned_request},
-            )
+        root_span = tracer.start_span(
+            name=pipeline_span_name,
+            span_type="pipeline",
+            inputs={"target_path": str(target_path), "request": cleaned_request},
+        )
 
-            try:
-                # 1. Initialize safe repository scanner
+        try:
+            if is_directory_mode:
+                # ---------------------------------------------------------
+                # Directory / Repository Mode
+                # ---------------------------------------------------------
                 repo_analyzer = RepoAnalyzer(target_path)
                 sha_before = repo_analyzer.get_repo_hash()
 
-                # 2. Instrumented File Search Span (captures files scanned, matches, timing)
                 search_span = tracer.start_span(
                     name="repo_file_search",
                     span_type="search",
@@ -198,28 +213,24 @@ class CodeReviewEngine:
                 try:
                     search_results, insufficient_evidence = repo_analyzer.search_codebase(
                         query=cleaned_request,
-                        max_files=4,
+                        max_files=5,
                     )
+                    top_files = [r.relative_path for r in search_results]
                     search_span.search_metrics = {
                         "files_scanned": len(repo_analyzer.discovered_files),
                         "files_matched": len(search_results),
-                        "top_files": [r.relative_path for r in search_results],
+                        "top_files": top_files,
                         "insufficient_evidence": insufficient_evidence,
                     }
                     tracer.end_span(
                         search_span,
-                        outputs={
-                            "files_scanned": len(repo_analyzer.discovered_files),
-                            "top_files": [r.relative_path for r in search_results],
-                            "insufficient_evidence": insufficient_evidence,
-                        },
+                        outputs={"files_matched": len(search_results), "top_files": top_files},
                         status="success",
                     )
                 except Exception as se_err:
                     tracer.end_span(search_span, status="error", error=f"File search failed: {se_err}")
                     raise
 
-                # 3. Build targeted code context (Avoids sending entire repo to LLM)
                 code_context = repo_analyzer.build_repo_context(
                     query=cleaned_request,
                     search_results=search_results,
@@ -231,152 +242,61 @@ class CodeReviewEngine:
                     f"FILES SCANNED: {len(repo_analyzer.discovered_files)}\n\n"
                     f"DEVELOPER REQUEST:\n{cleaned_request}\n\n"
                     f"{code_context}\n\n"
-                    f"Please conduct your thorough investigation following the 4 mandatory sections. "
-                    f"Cite exact relative file paths, function/class names, line numbers, and provide a concrete suggested fix. "
-                    f"If there is not enough evidence in the scanned files, explicitly state so."
+                    f"Please conduct your thorough investigation following the 4 mandatory sections."
                 )
 
-                # 4. Invoke LLM with telemetry
-                llm_response: LLMResponse = self._invoke_llm_traced(
-                    system_prompt=SYSTEM_REVIEW_PROMPT,
-                    user_prompt=user_prompt,
-                )
+                llm_response = self._invoke_llm_traced(SYSTEM_REVIEW_PROMPT, user_prompt)
 
-                # 5. Verify Repository Immutability Guarantee
-                is_intact = repo_analyzer.verify_repo_integrity()
-                sha_after = repo_analyzer.get_repo_hash() if is_intact else "tampered"
-                if not is_intact or sha_before != sha_after:
-                    err_msg = "CRITICAL ERROR: Repository files were modified during review! Halting."
+                # Post-analysis immutability check
+                if not repo_analyzer.verify_repo_integrity():
+                    sha_after = repo_analyzer.get_repo_hash()
+                    err_msg = "CRITICAL ERROR: Repository files were modified during review execution."
                     tracer.end_span(root_span, status="error", error=err_msg)
-                    return {
-                        "success": False,
-                        "error": err_msg,
-                        "report_path": None,
-                        "evidence_path": None,
-                    }
+                    return {"success": False, "error": err_msg, "report_path": None, "evidence_path": None}
+                sha_after = sha_before
 
-                # 6. Save Evidence & Artifacts
-                artifacts = self._save_evidence(
-                    target_path=target_path,
-                    sha_before=sha_before,
-                    sha_after=sha_after,
-                    cleaned_request=cleaned_request,
-                    user_prompt=user_prompt,
-                    llm_response=llm_response,
-                    validation_note=validation_note,
+                static_findings = [
+                    {**finding.to_dict(), "file_path": res.relative_path}
+                    for res in search_results
+                    for finding in res.analyzer.static_findings
+                ]
+                selected_files = top_files
+
+            else:
+                # ---------------------------------------------------------
+                # Single-File Mode
+                # ---------------------------------------------------------
+                try:
+                    analyzer = self._run_analyzer(target_path)
+                except Exception as e:
+                    tracer.end_span(root_span, status="error", error=f"Static analysis failed: {str(e)}")
+                    return {"success": False, "error": f"Failed to parse source file: {str(e)}", "report_path": None, "evidence_path": None}
+
+                sha_before = analyzer.initial_hash
+                code_context = analyzer.extract_context_for_request(cleaned_request)
+
+                user_prompt = (
+                    f"TARGET FILE: {target_path.name} (SHA-256: {sha_before[:12]}...)\n"
+                    f"TOTAL LINES: {len(analyzer.raw_lines)}\n\n"
+                    f"DEVELOPER REQUEST:\n{cleaned_request}\n\n"
+                    f"{code_context}\n\n"
+                    f"Please conduct your thorough review following the 4 mandatory sections."
                 )
 
-                # 7. Evaluate rule compliance
-                if llm_response.success and llm_response.content:
-                    self._evaluate_review_output(root_span.span_id, llm_response.content)
+                llm_response = self._invoke_llm_traced(SYSTEM_REVIEW_PROMPT, user_prompt)
 
-                # Collect static findings from top matching files
-                repo_static_findings = []
-                for res in search_results:
-                    for f in res.analyzer.static_findings:
-                        d = f.to_dict()
-                        d["file_path"] = res.relative_path
-                        repo_static_findings.append(d)
+                # Verify single-file integrity without re-instantiating analyzer
+                if not analyzer.verify_integrity():
+                    err_msg = "CRITICAL ERROR: Source file content was modified during review."
+                    tracer.end_span(root_span, status="error", error=err_msg)
+                    return {"success": False, "error": err_msg, "report_path": None, "evidence_path": None}
+                sha_after = sha_before
 
-                output_summary = {
-                    "success": llm_response.success,
-                    "is_repo_mode": True,
-                    "files_scanned": len(repo_analyzer.discovered_files),
-                    "selected_files": [r.relative_path for r in search_results],
-                    "insufficient_evidence": insufficient_evidence,
-                    "error": llm_response.error_message,
-                    "llm_response": llm_response,
-                    "static_findings": repo_static_findings,
-                    "report_path": artifacts["report_path"],
-                    "evidence_path": artifacts["evidence_path"],
-                    "ledger_path": artifacts["ledger_path"],
-                    "duration_sec": llm_response.duration_sec,
-                    "tokens": {
-                        "prompt": llm_response.prompt_tokens,
-                        "completion": llm_response.completion_tokens,
-                        "total": llm_response.total_tokens,
-                    },
-                }
+                static_findings = [f.to_dict() for f in analyzer.static_findings]
+                selected_files = [target_path.name]
+                insufficient_evidence = False
 
-                tracer.end_span(
-                    root_span,
-                    outputs={"success": llm_response.success, "report_path": str(artifacts["report_path"])},
-                    status="success" if llm_response.success else "error",
-                    error=llm_response.error_message,
-                )
-                return output_summary
-
-            except Exception as exc:
-                tracer.end_span(root_span, status="error", error=str(exc))
-                raise
-
-        # =============================================================
-        # Mode B: Single-File Investigation
-        # =============================================================
-        if not target_path.is_file():
-            return {
-                "success": False,
-                "error": f"Target path is not a file or directory: {source_file}",
-                "report_path": None,
-                "evidence_path": None,
-            }
-
-        root_span = tracer.start_span(
-            name="code_review_pipeline",
-            span_type="pipeline",
-            inputs={"source_file": str(target_path), "request": cleaned_request},
-        )
-
-        try:
-            # Step 2: Safe Static Analysis
-            try:
-                analyzer = self._run_analyzer(target_path)
-            except Exception as e:
-                tracer.end_span(root_span, status="error", error=f"Static analysis failed: {str(e)}")
-                return {
-                    "success": False,
-                    "error": f"Failed to analyze source file: {str(e)}",
-                    "report_path": None,
-                    "evidence_path": None,
-                }
-
-            sha_before = analyzer.initial_hash
-
-            # Step 3: Build Prompt Context
-            code_context = analyzer.extract_context_for_request(cleaned_request)
-            user_prompt = (
-                f"TARGET FILE: {target_path.name} (SHA-256: {sha_before[:12]}...)\n"
-                f"TOTAL LINES: {len(analyzer.raw_lines)}\n\n"
-                f"DEVELOPER REQUEST:\n{cleaned_request}\n\n"
-                f"{code_context}\n\n"
-                f"Please conduct your thorough review following the 4 mandatory sections."
-            )
-
-            # Step 4: Invoke Provider (Instrumented Generation Span)
-            llm_response: LLMResponse = self._invoke_llm_traced(
-                system_prompt=SYSTEM_REVIEW_PROMPT,
-                user_prompt=user_prompt,
-            )
-
-            # Step 5: Verify Source File Integrity
-            is_intact = analyzer.verify_integrity()
-            try:
-                with open(target_path, "r", encoding="utf-8", errors="replace") as f:
-                    sha_after = CodeAnalyzer(target_path).initial_hash
-            except Exception:
-                sha_after = "unknown"
-
-            if not is_intact or sha_before != sha_after:
-                err_msg = "CRITICAL ERROR: Source file content was modified during review! Halting."
-                tracer.end_span(root_span, status="error", error=err_msg)
-                return {
-                    "success": False,
-                    "error": err_msg,
-                    "report_path": None,
-                    "evidence_path": None,
-                }
-
-            # Step 6: Record Evidence & Artifacts (Instrumented Span)
+            # Persist Evidence
             artifacts = self._save_evidence(
                 target_path=target_path,
                 sha_before=sha_before,
@@ -387,19 +307,22 @@ class CodeReviewEngine:
                 validation_note=validation_note,
             )
 
-            # Step 7: Programmatic Evaluation
+            # Compliance evaluation
             if llm_response.success and llm_response.content:
                 self._evaluate_review_output(root_span.span_id, llm_response.content)
 
             output_summary = {
                 "success": llm_response.success,
-                "is_repo_mode": False,
+                "is_repo_mode": is_directory_mode,
+                "files_scanned": len(repo_analyzer.discovered_files) if is_directory_mode else 1,
+                "selected_files": selected_files,
+                "insufficient_evidence": insufficient_evidence,
                 "error": llm_response.error_message,
                 "llm_response": llm_response,
-                "static_findings": [f.to_dict() for f in analyzer.static_findings],
-                "report_path": artifacts["report_path"],
-                "evidence_path": artifacts["evidence_path"],
-                "ledger_path": artifacts["ledger_path"],
+                "static_findings": static_findings,
+                "report_path": artifacts.get("report_path"),
+                "evidence_path": artifacts.get("evidence_path"),
+                "ledger_path": artifacts.get("ledger_path"),
                 "duration_sec": llm_response.duration_sec,
                 "tokens": {
                     "prompt": llm_response.prompt_tokens,
@@ -410,7 +333,7 @@ class CodeReviewEngine:
 
             tracer.end_span(
                 root_span,
-                outputs={"success": llm_response.success, "report_path": str(artifacts["report_path"])},
+                outputs={"success": llm_response.success, "report_path": str(artifacts.get("report_path"))},
                 status="success" if llm_response.success else "error",
                 error=llm_response.error_message,
             )
