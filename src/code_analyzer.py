@@ -634,7 +634,20 @@ class RepoAnalyzer:
         if not terms:
             terms = raw_terms[:5]
 
-        term_patterns = {t: re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE) for t in terms}
+        term_patterns = {}
+        for t in terms:
+            variants = [t]
+            if t.endswith("ed") and len(t) > 4:
+                variants.append(t[:-2])
+                variants.append(t[:-1])
+            if t.endswith("ing") and len(t) > 5:
+                variants.append(t[:-3])
+            if t.endswith("es") and len(t) > 4:
+                variants.append(t[:-2])
+            elif t.endswith("s") and len(t) > 3 and not t.endswith("ss"):
+                variants.append(t[:-1])
+            pat_str = r"\b(?:" + "|".join(re.escape(v) for v in set(variants)) + r")\b"
+            term_patterns[t] = re.compile(pat_str, re.IGNORECASE)
 
         results: List[RepoSearchResult] = []
 
