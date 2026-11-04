@@ -50,3 +50,14 @@ Thumbs.db
 review-outputs/
 evidence/*.json
 evidence/*.md
+
+# Test & coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE & Editor files (excluding .vscode which has team presets)
+.idea/
+*.sublime-project
+*.sublime-workspace
