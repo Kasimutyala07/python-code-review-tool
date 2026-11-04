@@ -38,12 +38,15 @@ class MockProvider(BaseLLMProvider):
         """Dynamically extracts files, line ranges, symbols, and code lines from user prompt."""
         files = re.findall(r"---\s*File:\s*([^\s(]+)", user_prompt)
         if not files:
-            m = re.search(r"TARGET REPOSITORY:\s*([^\n\r(]+)", user_prompt)
-            if m:
-                files = [m.group(1).strip()]
+            m_single = re.search(r"^TARGET FILE:\s*([^\n\r(]+)", user_prompt, re.MULTILINE)
+            if m_single:
+                files = [m_single.group(1).strip()]
             else:
-                m_single = re.search(r"TARGET FILE:\s*([^\n\r(]+)", user_prompt)
-                files = [m_single.group(1).strip()] if m_single else ["source_code.py"]
+                m = re.search(r"^TARGET REPOSITORY:\s*([^\n\r(]+)", user_prompt, re.MULTILINE)
+                if m:
+                    files = [m.group(1).strip()]
+                else:
+                    files = ["source_code.py"]
 
         line_blocks = re.findall(r"Lines\s+(\d+)\s*-\s*(\d+):", user_prompt)
         symbols = re.findall(r"-\s*(?:class|def)\s*([A-Za-z0-9_.]+)", user_prompt)
